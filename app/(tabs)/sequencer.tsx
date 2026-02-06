@@ -147,11 +147,24 @@ export default function SequencerScreen() {
             const formData = new FormData();
             formData.append('file', { uri: file.uri, name: file.name, type: file.mimeType } as any);
             const response = await fetch('https://demucs.app/api/v1', { method: 'POST', body: formData, headers: { 'Content-Type': 'multipart/form-data' } });
+            
+            console.log('API Response Status:', response.status);
+            
+            if (!response.ok) {
+                const errorText = await response.text();
+                console.error('API Error:', errorText);
+                setProcessingStatus('error');
+                return;
+            }
+    
             stemData = await response.json();
-
+            console.log('API Response Data:', stemData);
+    
+    
             const stemsDir = FileSystem.documentDirectory + 'stems/';
+            console.log('Stems directory:', stemsDir);
             await FileSystem.makeDirectoryAsync(stemsDir, { intermediates: true });
-
+    
             const savedStems = {};
             for (const key in stemData) {
                 if (key === 'instrumental' || key === 'md5' || stemData[key] === null) continue;
@@ -159,30 +172,35 @@ export default function SequencerScreen() {
                     const url = stemData[key];
                     const fileExtension = url.split('.').pop();
                     const localUri = `${stemsDir}${key}.${fileExtension}`;
-                    await FileSystem.downloadAsync(url, localUri);
-                    savedStems[key] = localUri;
+                    console.log(`Downloading ${key} from ${url} to ${localUri}`);
+                    try {
+                        await FileSystem.downloadAsync(url, localUri);
+                        savedStems[key] = localUri;
+                        console.log(`Successfully downloaded ${key}`);
+                    } catch (downloadError) {
+                        console.error(`Error downloading ${key}:`, downloadError);
+                    }
                 }
             }
             setStems(savedStems);
-
+            setProcessingStatus('done');
+    
         } catch (error) {
             console.error('Error processing stems:', error);
             setProcessingStatus('error');
             return;
         }
-
+    
         if (stemData && stemData.drums) {
-            setProcessingStatus('converting');
             try {
+                setProcessingStatus('converting');
                 // Placeholder API for drum to MIDI conversion
-                const midiResponse = await new Promise(resolve => setTimeout(() => resolve({ kick: 'url', snare: 'url', hihat: 'url' }), 2000)); 
+                const midiResponse = await new Promise(resolve => setTimeout(() => resolve({ kick: 'url', snare: 'url', hihat: 'url' }), 2000));
                 setDrumMidi(midiResponse);
             } catch (error) {
                 console.error('Error converting drums to MIDI:', error);
-                setDrumMidi({ kick: 'url', snare: 'url', hihat: 'url' }); // Mock for UI
             }
         }
-        setProcessingStatus('done');
     };
 
     const getStatusMessage = () => {
