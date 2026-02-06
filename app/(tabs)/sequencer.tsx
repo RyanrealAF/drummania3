@@ -4,15 +4,16 @@ import * as DocumentPicker from 'expo-document-picker';
 import { useState, useEffect } from 'react';
 import { Svg, Path } from 'react-native-svg';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, runOnJS } from 'react-native-reanimated';
-import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 
 const RotaryKnob = ({ label, onValueChange, size = 80 }: { label: string, onValueChange: (value: number) => void, size?: number }) => {
     const rotation = useSharedValue(0);
     const animatedStyle = useAnimatedStyle(() => ({ transform: [{ rotate: `${rotation.value}deg` }] }));
 
     const gesture = Gesture.Pan().onUpdate((e) => {
-        rotation.value = Math.max(0, Math.min(300, rotation.value + e.velocityX / 5));
-        runOnJS(onValueChange)(rotation.value / 300);
+        const newRotation = Math.max(0, Math.min(300, rotation.value + e.velocityX / 5));
+        rotation.value = newRotation;
+        runOnJS(onValueChange)(newRotation / 300);
     });
 
     return (
@@ -28,13 +29,13 @@ const RotaryKnob = ({ label, onValueChange, size = 80 }: { label: string, onValu
 };
 
 const VerticalSlider = ({ label, onValueChange, level }: { label: string, onValueChange: (value: number) => void, level: number }) => {
-    const y = useSharedValue(level * 150); 
+    const y = useSharedValue((1 - level) * 150);
     const animatedStyle = useAnimatedStyle(() => ({ transform: [{ translateY: y.value }] }));
 
     const gesture = Gesture.Pan().onUpdate((e) => {
         const newY = Math.max(0, Math.min(150, y.value + e.translationY));
-        y.value = withTiming(newY, { duration: 50 });
-        runOnJS(onValueChange)(newY / 150);
+        y.value = newY;
+        runOnJS(onValueChange)(1 - newY / 150);
     });
 
     return (
@@ -50,11 +51,11 @@ const VerticalSlider = ({ label, onValueChange, level }: { label: string, onValu
 };
 
 const ChannelStrip = ({ stemLabel, hasThreshold, faderLevel, thresholdLevel, onFaderChange, onThresholdChange }: 
-    { stemLabel: string, hasThreshold?: boolean, faderLevel: number, thresholdLevel?: number, onFaderChange: (value: number) => void, onThresholdChange?: (value: number) => void }) => (
+    { stemLabel: string, hasThreshold?: boolean, faderLevel: number, thresholdLevel: number, onFaderChange: (value: number) => void, onThresholdChange?: (value: number) => void }) => (
     <View style={styles.channelStripContainer}>
         <View style={styles.channelStrip}>
             <VerticalSlider label="Fader" onValueChange={onFaderChange} level={faderLevel} />
-            {hasThreshold && onThresholdChange && thresholdLevel !== undefined && <VerticalSlider label="Thresh" onValueChange={onThresholdChange} level={thresholdLevel} />}
+            {hasThreshold && onThresholdChange && <VerticalSlider label="Thresh" onValueChange={onThresholdChange} level={thresholdLevel} />}
         </View>
         <Text style={styles.channelStripLabel}>{stemLabel}</Text>
     </View>
@@ -66,10 +67,17 @@ export default function SequencerScreen() {
     const [drumMidi, setDrumMidi] = useState<any>(null);
     const [processingStatus, setProcessingStatus] = useState('idle');
     const [levels, setLevels] = useState({ 
-        vocals: { fader: 0.5, threshold: 0.5 }, bass: { fader: 0.5, threshold: 0.5 }, 
-        other: { fader: 0.5, threshold: 0.5 }, main: { fader: 0.5, threshold: 0.5 },
-        kick: 0.5, snare: 0.5, hihat: 0.5
+        vocals: { fader: 0.75, threshold: 0.5 }, bass: { fader: 0.75, threshold: 0.5 }, 
+        other: { fader: 0.75, threshold: 0.5 }, main: { fader: 0.75, threshold: 0.5 },
+        kick: 0.75, snare: 0.75, hihat: 0.75
     });
+
+    const handleLevelChange = (type: string, control: string, value: number) => {
+        setLevels(prev => ({ ...prev, [type]: { ...prev[type], [control]: value } }));
+    };
+    const handleDrumLevelChange = (drum: string, value: number) => {
+        setLevels(prev => ({ ...prev, [drum]: value }));
+    };
 
     const resetState = () => {
         setSelectedFile(null);
@@ -79,7 +87,10 @@ export default function SequencerScreen() {
     };
 
     const handleFileUpload = async () => {
-        resetState();
+        if (processingStatus !== 'idle') {
+            resetState();
+            return;
+        }
         try {
             const result = await DocumentPicker.getDocumentAsync({ type: 'audio/*', copyToCacheDirectory: true });
             if (result.canceled === false) {
@@ -116,10 +127,8 @@ export default function SequencerScreen() {
         if (stemData && stemData.drums) {
             setProcessingStatus('converting');
             try {
-                const midiResponse = await fetch('https://drum-to-midi-api.com/v1', { // Placeholder
-                    method: 'POST', body: JSON.stringify({ audio_url: stemData.drums }), headers: { 'Content-Type': 'application/json' },
-                });
-                const midiData = await midiResponse.json();
+                // Placeholder API for drum to MIDI conversion
+                const midiResponse = await new Promise(resolve => setTimeout(() => resolve({ kick: 'url', snare: 'url', hihat: 'url' }), 2000)); 
                 setDrumMidi(midiData);
             } catch (error) {
                 console.error('Error converting drums to MIDI:', error);
@@ -133,92 +142,81 @@ export default function SequencerScreen() {
         switch (processingStatus) {
             case 'separating': return `Separating stems for ${selectedFile?.name}...`;
             case 'converting': return 'Converting drums to MIDI...';
-            case 'done': return 'Processing complete.';
-            case 'error': return 'An error occurred.';
-            default: return 'Load an audio file to begin';
+            case 'done': return 'Processing complete!';
+            case 'error': return 'An error occurred during processing.';
+            default: return null;
         }
-    };
-    
-    const handleLevelChange = (type: keyof typeof levels, control: 'fader' | 'threshold', value: number) => {
-        setLevels(prev => ({ ...prev, [type]: { ...(prev[type] as object), [control]: value } }));
-    };
-    
-    const handleDrumLevelChange = (drum: 'kick' | 'snare' | 'hihat', value: number) => {
-        setLevels(prev => ({ ...prev, [drum]: value }));
     };
 
     return (
-        <GestureHandlerRootView style={{ flex: 1 }}>
-            <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
-                <View style={styles.header}>
-                    <Text style={styles.headerTitle}>Studio Sequencer</Text>
-                    <TouchableOpacity style={styles.uploadButton} onPress={handleFileUpload} disabled={processingStatus !== 'idle' && processingStatus !== 'done'}>
-                        <Text style={styles.uploadButtonText}>{processingStatus === 'idle' || processingStatus === 'done' ? 'Load Audio' : 'Processing...'}</Text>
-                    </TouchableOpacity>
+        <ScrollView style={styles.container} contentContainerStyle={styles.contentContainer}>
+             <View style={styles.header}>
+                <Text style={styles.headerTitle}>Studio Sequencer</Text>
+                <TouchableOpacity style={styles.uploadButton} onPress={handleFileUpload}>
+                    <Text style={styles.uploadButtonText}>{processingStatus === 'idle' ? 'Load Audio' : 'Reset'}</Text>
+                </TouchableOpacity>
+            </View>
+
+            {processingStatus !== 'idle' && processingStatus !== 'done' && (
+                <View style={styles.loadingOverlay}>
+                    <ActivityIndicator size="large" color="#00aaff" />
+                    <Text style={styles.loadingText}>{getStatusMessage()}</Text>
+                </View>
+            )}
+
+            <View style={[styles.mainContent, processingStatus !== 'idle' && processingStatus !== 'done' && styles.blurred]}>
+                <View style={styles.waveformContainer}>
+                    <Svg height="100%" width="100%" viewBox="0 0 1000 100" preserveAspectRatio="none">
+                        <Path d="M0,50 C100,20 200,80 300,50 S500,80 600,50 S800,20 900,50 S1000,50 1000,50" fill="none" stroke="#00aaff" strokeWidth="2" />
+                    </Svg>
                 </View>
 
-                <View style={styles.mainContent}>
-                    {processingStatus !== 'idle' && processingStatus !== 'done' ? (
-                        <View style={styles.loadingContainer}>
-                            <ActivityIndicator size="large" color="#00aaff" />
-                            <Text style={styles.loadingText}>{getStatusMessage()}</Text>
-                        </View>
-                    ) : (
-                        <>
-                            <View style={styles.waveformContainer}>
-                                <Svg height="100%" width="100%" viewBox="0 0 1000 100" preserveAspectRatio="none">
-                                    <Path d="M0,50 C100,20 200,80 300,50 S500,80 600,50 S800,20 900,50 S1000,50 1000,50" fill="none" stroke="#00aaff" strokeWidth="2" />
-                                </Svg>
-                            </View>
-
-                            {drumMidi && (
-                                <View style={styles.stemsLinks}>
-                                    <Text style={styles.stemsTitle}>Download MIDI:</Text>
-                                    <TouchableOpacity onPress={() => Linking.openURL(drumMidi.kick)}><Text style={styles.stemLink}>Kick</Text></TouchableOpacity>
-                                    <TouchableOpacity onPress={() => Linking.openURL(drumMidi.snare)}><Text style={styles.stemLink}>Snare</Text></TouchableOpacity>
-                                    <TouchableOpacity onPress={() => Linking.openURL(drumMidi.hihat)}><Text style={styles.stemLink}>Hi-Hat</Text></TouchableOpacity>
-                                </View>
-                            )}
-
-                            <View style={styles.drumsContainer}>
-                                <RotaryKnob label="Kick" onValueChange={(v) => handleDrumLevelChange('kick', v)} />
-                                <RotaryKnob label="Snare" onValueChange={(v) => handleDrumLevelChange('snare', v)} />
-                                <RotaryKnob label="Hi-Hat" onValueChange={(v) => handleDrumLevelChange('hihat', v)} />
-                            </View>
-
-                            <View style={styles.slidersSection}>
-                                <ChannelStrip stemLabel="Vocals" hasThreshold={true} faderLevel={levels.vocals.fader} thresholdLevel={levels.vocals.threshold} onFaderChange={(v) => handleLevelChange('vocals', 'fader', v)} onThresholdChange={(v) => handleLevelChange('vocals', 'threshold', v)} />
-                                <ChannelStrip stemLabel="Bass" hasThreshold={true} faderLevel={levels.bass.fader} thresholdLevel={levels.bass.threshold} onFaderChange={(v) => handleLevelChange('bass', 'fader', v)} onThresholdChange={(v) => handleLevelChange('bass', 'threshold', v)} />
-                                <ChannelStrip stemLabel="Other" hasThreshold={true} faderLevel={levels.other.fader} thresholdLevel={levels.other.threshold} onFaderChange={(v) => handleLevelChange('other', 'fader', v)} onThresholdChange={(v) => handleLevelChange('other', 'threshold', v)} />
-                                <ChannelStrip stemLabel="Main" faderLevel={levels.main.fader} onFaderChange={(v) => handleLevelChange('main', 'fader', v)} />
-                            </View>
-                        </>
-                    )}
+                <View style={styles.drumsContainer}>
+                    <RotaryKnob label="Kick" onValueChange={(v) => handleDrumLevelChange('kick', v)} />
+                    <RotaryKnob label="Snare" onValueChange={(v) => handleDrumLevelChange('snare', v)} />
+                    <RotaryKnob label="Hi-Hat" onValueChange={(v) => handleDrumLevelChange('hihat', v)} />
                 </View>
-            </ScrollView>
-        </GestureHandlerRootView>
+
+                {drumMidi && (
+                    <View style={styles.stemsLinks}>
+                        <Text style={styles.stemsTitle}>Download MIDI</Text>
+                        <TouchableOpacity onPress={() => Linking.openURL(drumMidi.kick)}><Text style={styles.stemLink}>Kick</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => Linking.openURL(drumMidi.snare)}><Text style={styles.stemLink}>Snare</Text></TouchableOpacity>
+                        <TouchableOpacity onPress={() => Linking.openURL(drumMidi.hihat)}><Text style={styles.stemLink}>Hi-Hat</Text></TouchableOpacity>
+                    </View>
+                )}
+
+                <View style={styles.slidersSection}>
+                    <ChannelStrip stemLabel="Vocals" hasThreshold={true} faderLevel={levels.vocals.fader} thresholdLevel={levels.vocals.threshold} onFaderChange={(v) => handleLevelChange('vocals', 'fader', v)} onThresholdChange={(v) => handleLevelChange('vocals', 'threshold', v)} />
+                    <ChannelStrip stemLabel="Bass" hasThreshold={true} faderLevel={levels.bass.fader} thresholdLevel={levels.bass.threshold} onFaderChange={(v) => handleLevelChange('bass', 'fader', v)} onThresholdChange={(v) => handleLevelChange('bass', 'threshold', v)} />
+                    <ChannelStrip stemLabel="Other" hasThreshold={true} faderLevel={levels.other.fader} thresholdLevel={levels.other.threshold} onFaderChange={(v) => handleLevelChange('other', 'fader', v)} onThresholdChange={(v) => handleLevelChange('other', 'threshold', v)} />
+                    <ChannelStrip stemLabel="Main" faderLevel={levels.main.fader} onFaderChange={(v) => handleLevelChange('main', 'fader', v)} thresholdLevel={0} />
+                </View>
+            </View>
+        </ScrollView>
     );
 }
 
 const styles = StyleSheet.create({
     container: { flex: 1, backgroundColor: '#0d0d0d' },
-    contentContainer: { padding: 20, paddingBottom: 50 },
-    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
+    contentContainer: { padding: 20 },
+    header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20, zIndex: 10 },
     headerTitle: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
     uploadButton: { backgroundColor: '#2a2a2a', padding: 12, borderRadius: 8 },
     uploadButtonText: { color: '#fff', fontWeight: 'bold' },
+    loadingOverlay: { ...StyleSheet.absoluteFillObject, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'center', alignItems: 'center', zIndex: 5 },
+    loadingText: { color: '#00aaff', marginTop: 15, fontSize: 16, fontWeight: 'bold' },
     mainContent: { alignItems: 'center' },
-    loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', minHeight: 400 },
-    loadingText: { color: '#00aaff', marginTop: 15, fontSize: 16 },
+    blurred: { opacity: 0.2 },
     waveformContainer: { width: '100%', height: 100, backgroundColor: '#000', borderRadius: 10, marginBottom: 30, padding: 5, borderWidth: 1, borderColor: '#2a2a2a' },
-    stemsLinks: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', backgroundColor: '#1a1a1a', padding: 15, borderRadius: 10, marginBottom: 20 },
-    stemsTitle: { color: 'white', fontSize: 14, fontWeight: 'bold' },
-    stemLink: { color: '#00aaff', fontSize: 14, textDecorationLine: 'underline' },
-    drumsContainer: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginBottom: 30, backgroundColor: '#1a1a1a', padding: 20, borderRadius: 15 },
+    drumsContainer: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', marginBottom: 20, backgroundColor: '#1a1a1a', padding: 20, borderRadius: 15 },
     rotaryKnobContainer: { alignItems: 'center' },
-    rotaryKnob: { justifyContent: 'center', alignItems: 'center', backgroundColor: '#111', borderWidth: 2, borderColor: '#333', shadowColor: '#00aaff', shadowRadius: 5, shadowOpacity: 0.5 },
+    rotaryKnob: { justifyContent: 'center', alignItems: 'center', backgroundColor: '#111', borderWidth: 2, borderColor: '#333', shadowColor: '#00aaff', shadowRadius: 8, shadowOpacity: 0.7 },
     rotaryKnobIndicator: { width: 4, height: 20, backgroundColor: '#00aaff', borderRadius: 2 },
     rotaryKnobLabel: { color: '#aaa', fontWeight: 'bold', marginTop: 10, fontSize: 12 },
+    stemsLinks: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', backgroundColor: '#1a1a1a', padding: 15, borderRadius: 15, marginBottom: 20 },
+    stemsTitle: { color: 'white', fontSize: 14, fontWeight: 'bold', textAlign: 'center' },
+    stemLink: { color: '#00aaff', fontSize: 14, paddingVertical: 8, textDecorationLine: 'underline' },
     slidersSection: { flexDirection: 'row', justifyContent: 'space-around', width: '100%', backgroundColor: '#1a1a1a', padding: 20, borderRadius: 15 },
     channelStripContainer: { alignItems: 'center' },
     channelStrip: { flexDirection: 'row', height: 200, backgroundColor: '#0a0a0a', padding: 15, borderRadius: 10, borderWidth: 1, borderColor: '#2a2a2a' },
@@ -226,5 +224,5 @@ const styles = StyleSheet.create({
     verticalSliderContainer: { alignItems: 'center', marginHorizontal: 10 },
     verticalSliderLabel: { color: '#aaa', fontSize: 10, fontWeight: 'bold', marginBottom: 10 },
     verticalSliderTrack: { width: 4, height: 150, backgroundColor: '#000', borderRadius: 2, justifyContent: 'flex-start' },
-    verticalSliderThumb: { width: 24, height: 40, backgroundColor: '#333', borderRadius: 5, borderWidth: 1, borderColor: '#555', alignSelf: 'center', position: 'absolute', top: 0 },
+    verticalSliderThumb: { width: 24, height: 40, backgroundColor: '#333', borderRadius: 5, borderWidth: 1, borderColor: '#555', alignSelf: 'center', position: 'absolute', top: 0, shadowColor: '#000', shadowRadius: 3, shadowOpacity: 0.5 },
 });
